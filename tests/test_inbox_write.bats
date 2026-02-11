@@ -431,3 +431,63 @@ assert len(data['messages']) == 1, 'Expected 1 message after auto-create'
 print('T-012: PASS')
 EOF
 }
+
+# =============================================================================
+# T-013: SECURITY — Shell injection via triple-quote breakout (CVE regression)
+# =============================================================================
+
+@test "T-013: triple-quote content does NOT execute Python code (injection prevention)" {
+    # This payload would break out of the old '''$CONTENT''' interpolation
+    # and execute arbitrary Python if the fix is reverted.
+    INJECTION_PAYLOAD="'''
+import os; os.system('touch $TEST_TMPDIR/PWNED')
+'''"
+
+    run bash "$TEST_INBOX_WRITE" "test_agent" "$INJECTION_PAYLOAD" "test_type" "attacker"
+    [ "$status" -eq 0 ]
+
+    # The PWNED file must NOT exist — injection must not execute
+    [ ! -f "$TEST_TMPDIR/PWNED" ]
+
+    # The message content must be stored literally (including the triple quotes)
+    python3 <<EOF
+import yaml
+
+with open('$TEST_INBOX_DIR/test_agent.yaml') as f:
+    data = yaml.safe_load(f)
+
+msg = data['messages'][0]
+# Content should contain the literal triple-quote string, stored as data not code
+assert "import os" in msg['content'], 'Injection payload should be stored as literal content'
+assert msg['from'] == 'attacker', 'From field mismatch'
+
+print('T-013: PASS — injection payload stored as data, not executed')
+EOF
+}
+
+# =============================================================================
+# T-014: SECURITY — Newline injection in content field
+# =============================================================================
+
+@test "T-014: newline characters in content are preserved safely" {
+    NEWLINE_CONTENT="line1
+line2
+line3"
+
+    run bash "$TEST_INBOX_WRITE" "test_agent" "$NEWLINE_CONTENT"
+    [ "$status" -eq 0 ]
+
+    python3 <<EOF
+import yaml
+
+with open('$TEST_INBOX_DIR/test_agent.yaml') as f:
+    data = yaml.safe_load(f)
+
+msg = data['messages'][0]
+assert 'line1' in msg['content'], 'line1 not found'
+assert 'line2' in msg['content'], 'line2 not found'
+assert 'line3' in msg['content'], 'line3 not found'
+
+print('T-014: PASS — newlines preserved in content')
+EOF
+}

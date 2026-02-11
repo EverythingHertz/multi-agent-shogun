@@ -193,10 +193,14 @@ normalize_special_command() {
             echo "/clear"
             ;;
         model_switch)
-            if [[ "$raw_content" =~ ^/model[[:space:]]+[^[:space:]].* ]]; then
-                echo "$raw_content"
+            # SECURITY: Strip newlines/control chars to prevent tmux keystroke injection.
+            # Without this, payload "/model sonnet\nmalicious" would inject extra commands.
+            local sanitized_content
+            sanitized_content=$(printf '%s' "$raw_content" | tr -d '\n\r' | head -c 50)
+            if [[ "$sanitized_content" =~ ^/model[[:space:]]+[a-zA-Z0-9._-]+$ ]]; then
+                echo "$sanitized_content"
             else
-                echo "[$(date)] [SKIP] Invalid model_switch payload for $AGENT_ID: ${raw_content:-<empty>}" >&2
+                echo "[$(date)] [SKIP] Invalid model_switch payload for $AGENT_ID: ${sanitized_content:-<empty>}" >&2
             fi
             ;;
     esac

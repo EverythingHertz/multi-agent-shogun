@@ -25,12 +25,19 @@ _cli_adapter_read_yaml() {
     local key_path="$1"
     local fallback="${2:-}"
     local result
-    result=$(python3 -c "
-import yaml, sys
+    # SECURITY: Pass values via environment variables to prevent Python string injection.
+    # Previously used shell interpolation ('${key_path}') which allowed code execution
+    # if key_path contained quotes or Python syntax.
+    result=$(YAML_FILE="$CLI_ADAPTER_SETTINGS" YAML_KEY="$key_path" YAML_FALLBACK="$fallback" \
+        python3 - << 'PYEOF' 2>/dev/null
+import yaml, sys, os
 try:
-    with open('${CLI_ADAPTER_SETTINGS}') as f:
+    yaml_file = os.environ.get("YAML_FILE", "")
+    key_path = os.environ.get("YAML_KEY", "")
+    fallback = os.environ.get("YAML_FALLBACK", "")
+    with open(yaml_file) as f:
         cfg = yaml.safe_load(f) or {}
-    keys = '${key_path}'.split('.')
+    keys = key_path.split('.')
     val = cfg
     for k in keys:
         if isinstance(val, dict):
@@ -41,10 +48,11 @@ try:
     if val is not None:
         print(val)
     else:
-        print('${fallback}')
+        print(fallback)
 except Exception:
-    print('${fallback}')
-" 2>/dev/null)
+    print(os.environ.get("YAML_FALLBACK", ""))
+PYEOF
+)
     if [[ -z "$result" ]]; then
         echo "$fallback"
     else

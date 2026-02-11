@@ -39,12 +39,28 @@ while [ $attempt -lt $max_attempts ]; do
         flock -w 5 200 || exit 1
 
         # Add message via python3 (unified YAML handling)
-        python3 -c "
-import yaml, sys
+        # SECURITY: All values passed via environment variables to prevent
+        # shell injection (CVE: Python string breakout via triple-quote).
+        # Uses quoted heredoc ('PYEOF') to block shell interpolation.
+        IW_INBOX="$INBOX" \
+        IW_MSG_ID="$MSG_ID" \
+        IW_FROM="$FROM" \
+        IW_TIMESTAMP="$TIMESTAMP" \
+        IW_TYPE="$TYPE" \
+        IW_CONTENT="$CONTENT" \
+        python3 - << 'PYEOF' || exit 1
+import yaml, sys, os, tempfile
 
 try:
+    inbox_path = os.environ["IW_INBOX"]
+    msg_id = os.environ["IW_MSG_ID"]
+    msg_from = os.environ["IW_FROM"]
+    timestamp = os.environ["IW_TIMESTAMP"]
+    msg_type = os.environ["IW_TYPE"]
+    content = os.environ["IW_CONTENT"]
+
     # Load existing inbox
-    with open('$INBOX') as f:
+    with open(inbox_path) as f:
         data = yaml.safe_load(f)
 
     # Initialize if needed
@@ -55,11 +71,11 @@ try:
 
     # Add new message
     new_msg = {
-        'id': '$MSG_ID',
-        'from': '$FROM',
-        'timestamp': '$TIMESTAMP',
-        'type': '$TYPE',
-        'content': '''$CONTENT''',
+        'id': msg_id,
+        'from': msg_from,
+        'timestamp': timestamp,
+        'type': msg_type,
+        'content': content,
         'read': False
     }
     data['messages'].append(new_msg)
@@ -73,12 +89,11 @@ try:
         data['messages'] = unread + read[-30:]
 
     # Atomic write: tmp file + rename (prevents partial reads)
-    import tempfile, os
-    tmp_fd, tmp_path = tempfile.mkstemp(dir=os.path.dirname('$INBOX'), suffix='.tmp')
+    tmp_fd, tmp_path = tempfile.mkstemp(dir=os.path.dirname(inbox_path), suffix='.tmp')
     try:
         with os.fdopen(tmp_fd, 'w') as f:
             yaml.dump(data, f, default_flow_style=False, allow_unicode=True, indent=2)
-        os.replace(tmp_path, '$INBOX')
+        os.replace(tmp_path, inbox_path)
     except:
         os.unlink(tmp_path)
         raise
@@ -86,7 +101,7 @@ try:
 except Exception as e:
     print(f'ERROR: {e}', file=sys.stderr)
     sys.exit(1)
-" || exit 1
+PYEOF
 
     ) 200>"$LOCKFILE"; then
         # Success
